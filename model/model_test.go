@@ -1,6 +1,8 @@
 package model
 
 import (
+	"fmt"
+	"os"
 	"reflect"
 	"slices"
 	"testing"
@@ -133,4 +135,58 @@ func TestPopulateFieldsAlternateName(t *testing.T) {
 	}, m); diff != "" {
 		t.Errorf("populateFields() set incorrect values (-want +got):\n%s", diff)
 	}
+}
+
+func TestForwardSimple(t *testing.T) {
+	p := "../convert/testdata/Meta-Llama-3-8B-Instruct"
+	if testing.Short() {
+		t.Skip("skipping in short mode")
+	} else if _, err := os.Stat(p); err != nil {
+		t.Skipf("%s not found", p)
+	}
+
+	m, err := New(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	m.Config().Cache.Init(m.Backend(), ml.DTypeF32, 2048)
+
+	// Create inputs from text
+	n, err := m.(TextProcessor).Encode("hi")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Setup options based on sequence pattern
+	options := Options{
+		Inputs:    n,
+		Positions: make([]int32, len(n)),
+		Sequences: make([]int, len(n)),
+		Outputs:   []int32{int32(len(n) - 1)},
+	}
+	for i := range options.Positions {
+		options.Positions[i] = int32(i)
+		options.Sequences[i] = 1
+	}
+
+	ctx := m.Backend().NewContext()
+	defer ctx.Close()
+
+	modelOutput, err := Forward(ctx, m, options)
+	if err != nil {
+		t.Fatal(fmt.Errorf("forward pass failed: %v", err))
+	}
+	for i := range options.Positions {
+		options.Positions[i] = int32(i)
+		options.Sequences[i] = 1
+	}
+
+	// Verify the output is populated
+	if modelOutput == nil {
+		t.Error("expected non-nil model output")
+	}
+
+	// Compute the output
+	ctx.Compute(modelOutput)
 }
